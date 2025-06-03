@@ -94,7 +94,7 @@ As senhas podem ser verificadas contra vazamentos online
 ## 📸 Exemplo de uso
 ```
 Digite a senha mestre: **********
-Digite o código TOTP atual: 123456
+Digite o código TOTP atual: ******
 
 ✅ Login bem-sucedido!
 
