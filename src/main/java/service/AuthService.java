@@ -7,11 +7,11 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Scanner;
 import java.util.regex.Pattern;
+
 import org.mindrot.jbcrypt.BCrypt;
 
 /**
- * Gerencia a autenticação do usuário com senha mestre e verificação TOTP.
- * Garante acesso seguro usando credenciais criptografadas e códigos baseados em tempo.
+ * Classe responsável pela autenticação segura do usuário utilizando senha mestre e TOTP.
  */
 public class AuthService {
 
@@ -23,69 +23,71 @@ public class AuthService {
 
     private final Scanner scanner;
 
-    /**
-     * Construtor da AuthService, inicializando a autenticação com
-     * validação de senha e TOTP.
-     * Gera ou carrega um segredo seguro.
-     *
-     * @param scanner Scanner usado para ler a entrada do usuário
-     * @throws Exception se a autenticação falhar após o número máximo de tentativas
-     */
     public AuthService(Scanner scanner) throws Exception {
         this.scanner = scanner;
+
         String masterPasswordHash = loadOrCreatePassword();
         String totpSecret = TOTPService.loadOrCreateSecret();
 
-        System.out.println("\nAutenticação de Dois Fatores (TOTP) está ativada.");
-        System.out.println("Use este segredo no seu aplicativo autenticador se ainda não estiver registrado:");
-        System.out.println(TOTPService.getBase32Secret(totpSecret));
-        System.out.println("Alternativamente, escaneie um QR code usando esta URL:");
-        System.out.println(TOTPService.getOtpAuthUrl(totpSecret, "user@example.com", "SecurePasswordManager"));
+        exibirInformacoesTOTP(totpSecret);
 
-        String sessionPassword = null;
-
-        for (int attempts = 1; attempts <= MAX_ATTEMPTS; attempts++) {
-            try {
-                System.out.print("\nDigite a senha mestre: ");
-                String inputPassword = InputSanitizer.sanitize(scanner.nextLine(), MAX_PASSWORD_LENGTH, false);
-
-                if (!BCrypt.checkpw(inputPassword, masterPasswordHash)) {
-                    System.out.println("Senha incorreta.");
-                    continue;
-                }
-
-                System.out.print("Digite o código TOTP atual: ");
-                String inputCode = InputSanitizer.sanitize(scanner.nextLine(), MAX_TOTP_LENGTH, true);
-
-                if (!NUMBER_PATTERN.matcher(inputCode).matches()) {
-                    throw new IllegalArgumentException("Somente números são permitidos neste campo.");
-                }
-
-                if (TOTPService.validateCode(totpSecret, inputCode)) {
-                    System.out.println("Autenticação bem-sucedida.");
-                    sessionPassword = inputPassword;
-                    break;
-                }
-            } catch (IllegalArgumentException ex) {
-                System.out.println("Entrada inválida. " + InputSanitizer.escapeForLog(ex.getMessage()));
-            }
-        }
+        String sessionPassword = autenticarUsuario(masterPasswordHash, totpSecret);
 
         if (sessionPassword == null) {
-            throw new Exception("Falha na autenticação após o número máximo de tentativas.");
+            throw new Exception("Falha na autenticação após múltiplas tentativas.");
         }
 
         String salt = EncryptionService.getOrCreatePersistentSalt();
         EncryptionService.setSessionKeyAndSalt(sessionPassword, salt);
     }
 
-    /**
-     * Carrega o hash da senha mestre existente ou solicita ao usuário para criar uma nova.
-     * Verifica a senha contra vazamentos conhecidos e impõe um comprimento mínimo.
-     *
-     * @return O hash da senha mestre
-     * @throws Exception se ocorrer erro ao ler ou escrever o arquivo da senha
-     */
+    private void exibirInformacoesTOTP(String totpSecret) {
+        System.out.println("\nAutenticação de Dois Fatores (TOTP) está ativada.");
+        System.out.println("Use este segredo no seu aplicativo autenticador:");
+        System.out.println(TOTPService.getBase32Secret(totpSecret));
+        System.out.println("Ou escaneie o QR code com esta URL:");
+        System.out.println(TOTPService.getOtpAuthUrl(totpSecret, "user@example.com", "SecurePasswordManager"));
+    }
+
+    private String autenticarUsuario(String passwordHash, String totpSecret) {
+        int attempts = 0;
+        while (attempts < MAX_ATTEMPTS) {
+            attempts++;
+
+            String inputPassword = solicitarEntrada("Digite a senha mestre: ", MAX_PASSWORD_LENGTH, false);
+            if (!BCrypt.checkpw(inputPassword, passwordHash)) {
+                System.out.println("Senha incorreta.");
+                continue;
+            }
+
+            String totpCode = solicitarEntrada("Digite o código TOTP atual: ", MAX_TOTP_LENGTH, true);
+            if (!NUMBER_PATTERN.matcher(totpCode).matches()) {
+                System.out.println("Código inválido: apenas números são permitidos.");
+                continue;
+            }
+
+            if (TOTPService.validateCode(totpSecret, totpCode)) {
+                System.out.println("Autenticação bem-sucedida.");
+                return inputPassword;
+            } else {
+                System.out.println("Código TOTP inválido.");
+            }
+        }
+
+        return null;
+    }
+
+    private String solicitarEntrada(String mensagem, int maxLength, boolean apenasNumeros) {
+        while (true) {
+            try {
+                System.out.print(mensagem);
+                return InputSanitizer.sanitize(scanner.nextLine(), maxLength, apenasNumeros);
+            } catch (IllegalArgumentException ex) {
+                System.out.println("Entrada inválida. " + InputSanitizer.escapeForLog(ex.getMessage()));
+            }
+        }
+    }
+
     String loadOrCreatePassword() throws Exception {
         Path path = Paths.get(PASSWORD_FILE);
 
@@ -93,49 +95,47 @@ public class AuthService {
             return Files.readString(path).trim();
         }
 
-        System.out.println("Nenhuma senha mestre encontrada. Por favor, crie uma agora.");
-
-        String newPassword;
+        System.out.println("Nenhuma senha mestre encontrada. Crie uma agora.");
 
         while (true) {
-            try {
-                System.out.print("Nova senha: ");
-                newPassword = InputSanitizer.sanitize(scanner.nextLine(), MAX_PASSWORD_LENGTH, false);
+            String novaSenha = solicitarEntrada("Nova senha: ", MAX_PASSWORD_LENGTH, false);
 
-                int breachCount = PasswordBreachChecker.checkPassword(newPassword);
-                if (breachCount < 0) {
-                    System.out.println("Erro ao verificar a senha contra vazamentos conhecidos. Por favor, tente novamente.");
-                    continue;
-                } else if (breachCount > 0) {
-                    System.out.printf(
-                            "Esta senha apareceu em %d vazamento(s). Por favor, escolha uma senha mais forte.%n",
-                            breachCount
-                    );
-                    continue;
-                }
-
-                if (newPassword.length() < 8) {
-                    System.out.println("A senha deve ter pelo menos 8 caracteres. Por favor, tente novamente.");
-                    continue;
-                }
-
-                System.out.print("Digite novamente a senha mestre para confirmar: ");
-                String inputPassword = InputSanitizer.sanitize(scanner.nextLine(), MAX_PASSWORD_LENGTH, false);
-
-                if (!newPassword.equals(inputPassword)) {
-                    System.out.println("As senhas não coincidem. Por favor, tente novamente.");
-                    continue;
-                }
-
-                break;
-            } catch (IllegalArgumentException ex) {
-                System.out.println("Entrada inválida. " + InputSanitizer.escapeForLog(ex.getMessage()));
+            if (!senhaValida(novaSenha)) {
+                continue;
             }
+
+            String confirmacao = solicitarEntrada("Confirme a senha: ", MAX_PASSWORD_LENGTH, false);
+
+            if (!novaSenha.equals(confirmacao)) {
+                System.out.println("As senhas não coincidem. Tente novamente.");
+                continue;
+            }
+
+            String hash = BCrypt.hashpw(novaSenha, BCrypt.gensalt());
+            Files.writeString(path, hash);
+            System.out.println("Senha mestre criada e salva.");
+            return hash;
+        }
+    }
+
+    private boolean senhaValida(String senha) {
+        int breachCount = PasswordBreachChecker.checkPassword(senha);
+
+        if (breachCount < 0) {
+            System.out.println("Erro ao verificar vazamentos. Tente novamente.");
+            return false;
         }
 
-        String hash = BCrypt.hashpw(newPassword, BCrypt.gensalt());
-        Files.writeString(path, hash);
-        System.out.println("Senha mestre salva.");
-        return hash;
+        if (breachCount > 0) {
+            System.out.printf("A senha foi encontrada em %d vazamento(s). Escolha outra.%n", breachCount);
+            return false;
+        }
+
+        if (senha.length() < 8) {
+            System.out.println("A senha deve ter no mínimo 8 caracteres.");
+            return false;
+        }
+
+        return true;
     }
 }
