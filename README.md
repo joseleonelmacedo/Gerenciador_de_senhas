@@ -38,6 +38,7 @@ Gerenciador_de_senhas/
 │   │   ├── utils/
 │   │   │   ├── InputSanitizer.java
 │   │   │   └── PasswordGenerator.java
+│   │   │   └── PasswordStrengthEvaluator.java
 │   │   └── App.java
 │   └── test/
 ├── totp_secret.dat
