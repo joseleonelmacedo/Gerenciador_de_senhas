@@ -3,6 +3,7 @@ package service;
 import model.Credential;
 import utils.InputSanitizer;
 import utils.PasswordGenerator;
+import utils.PasswordStrengthEvaluator;
 import org.mindrot.jbcrypt.BCrypt;
 
 import java.awt.datatransfer.StringSelection;
@@ -61,9 +62,9 @@ public class CredentialManager {
         }
 
         IntStream.range(0, credentials.size())
-            .mapToObj(i -> String.format("%d. Serviço: %s | Usuário: %s", i + 1,
-                    credentials.get(i).serviceName(), credentials.get(i).username()))
-            .forEach(System.out::println);
+                .mapToObj(i -> String.format("%d. Serviço: %s | Usuário: %s", i + 1,
+                        credentials.get(i).serviceName(), credentials.get(i).username()))
+                .forEach(System.out::println);
     }
 
     private void addCredential() {
@@ -72,9 +73,21 @@ public class CredentialManager {
             String username = prompt("Digite o nome de usuário:", 50, false);
             String option = promptYesNo("Gerar uma senha forte? (s/n):");
 
-            String password = option.equals("s") ? generateCustomPassword() : prompt("Digite a senha:", 64, false);
-            String encrypted = EncryptionService.encrypt(password);
+            String password;
+            if (option.equals("s")) {
+                password = generateCustomPassword();
+            } else {
+                while (true) {
+                    password = prompt("Digite a senha:", 64, false);
+                    if (PasswordStrengthEvaluator.isStrong(password)) {
+                        break;
+                    } else {
+                        System.out.println("⚠️  A senha fornecida é fraca. Tente novamente com uma senha mais segura.");
+                    }
+                }
+            }
 
+            String encrypted = EncryptionService.encrypt(password);
             credentials.add(new Credential(service, username, encrypted));
             System.out.println("Credencial adicionada com sucesso.");
         } catch (Exception e) {
@@ -179,6 +192,7 @@ public class CredentialManager {
     }
 
     // ========== Métodos Utilitários ==========
+
     private String prompt(String message, int maxLength, boolean numbersOnly) {
         System.out.print(message + " ");
         return InputSanitizer.sanitize(scanner.nextLine(), maxLength, numbersOnly);
